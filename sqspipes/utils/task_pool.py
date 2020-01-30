@@ -50,7 +50,7 @@ class TaskPool:
 
         try:
             result = fn(*args)
-        except Exception as e:
+        except BaseException as e:
 
             traceback.print_exc()
 
