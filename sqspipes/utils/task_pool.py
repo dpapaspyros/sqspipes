@@ -15,6 +15,14 @@ class TaskError(Exception):
         self.error = error
 
 
+class TaskCallback(object):
+
+    def __init__(self, result, callback, callback_args=None):
+        self.result = result
+        self.callback = callback
+        self.callback_args = callback_args or ()
+
+
 class TaskPool:
 
     def __init__(self, workers, callback):

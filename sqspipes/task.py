@@ -8,7 +8,7 @@ import boto3
 from botocore.errorfactory import ClientError
 from multiprocessing import Lock
 
-from .utils.task_pool import TaskPool, TaskError
+from .utils.task_pool import TaskPool, TaskError, TaskCallback
 
 
 class EmptyTaskOutput(object):
@@ -132,6 +132,9 @@ class TaskRunner(object):
         self._result_mutex.acquire()
         self.results.append(task_output)
 
+        # action after sending result message
+        post_process_callback, post_process_callback_args = None, None
+
         if not(
             ((task_output is None) and self.ignore_none) or
             (isinstance(task_output, EmptyTaskOutput))
@@ -141,6 +144,12 @@ class TaskRunner(object):
                 # it will be calculated from the extracted message
                 if callable(task_meta.get('priority')):
                     task_meta['priority'] = task_meta['priority'](task_output)
+
+                # check if task output contains a post process callback
+                if type(task_output) == TaskCallback:
+                    post_process_callback = task_output.callback
+                    post_process_callback_args = task_output.callback_args
+                    task_output = task_output.result
 
                 # also write to queues for next task to pick up
                 try:
@@ -154,6 +163,10 @@ class TaskRunner(object):
                     )
                 except:
                     traceback.print_exc()
+
+        # run the callback
+        if post_process_callback:
+            post_process_callback(*post_process_callback_args)
 
         self._result_mutex.release()
 
