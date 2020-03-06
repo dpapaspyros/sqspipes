@@ -196,3 +196,11 @@ class TaskClient(object):
 
         # run the task
         return task.run(args, priority=priority, iterate=iterate, min_priority=min_priority, max_priority=max_priority)
+
+    def submit(self, args, priority=0):
+        task = self.tasks[0]
+
+        task.setup()
+
+        for _ in task.process(args=args, priority=priority):
+            pass

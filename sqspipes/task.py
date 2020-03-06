@@ -170,6 +170,60 @@ class TaskRunner(object):
 
         self._result_mutex.release()
 
+    def process(self, args, priority, pool=None, in_queues=None):
+        if not pool:
+            pool = TaskPool(self.workers, callback=self._on_task_finish)
+
+        # receive messages
+        messages = []
+        for in_queue in (in_queues or []):
+            if messages:
+                break
+
+            messages += in_queue.receive_messages(MaxNumberOfMessages=min(self.workers, 10))
+
+        if not in_queues:
+            pool.run_task(self.fn, args, meta={
+                'priority': priority
+            })
+
+            # interval could either be a function or a number
+            if callable(self.interval):
+                _interval = self.interval()
+            else:
+                _interval = self.interval
+
+            time.sleep(_interval)
+
+        elif messages:
+            # get payloads from messages & delete them from sqs
+            payloads = []
+            for message in messages:
+                payloads.append(json.loads(message.body))
+                message.delete()
+
+            # run tasks
+            for payload in payloads:
+                pool.run_task(self.fn, (payload['value'],) + args, payload['meta'])
+
+        # return any available results
+        if self.results:
+            self._result_mutex.acquire()
+
+            _error = None
+            for result in self.results:
+                if type(result) == TaskError:
+
+                    _error = result.error
+                else:
+                    yield result
+
+            if _error:
+                raise _error
+
+            self.results = []
+            self._result_mutex.release()
+
     def _run(self, args, priority=0, min_priority=None, max_priority=None):
         # create the thread pool
         pool = TaskPool(self.workers, callback=self._on_task_finish)
@@ -178,55 +232,8 @@ class TaskRunner(object):
         in_queues = self.in_queues(min_priority, max_priority)
 
         while True:
-            # receive messages
-            messages = []
-            for in_queue in in_queues:
-                if messages:
-                    break
-
-                messages += in_queue.receive_messages(MaxNumberOfMessages=min(self.workers, 10))
-
-            if not in_queues:
-                pool.run_task(self.fn, args, meta={
-                    'priority': priority
-                })
-
-                # interval could either be a function or a number
-                if callable(self.interval):
-                    _interval = self.interval()
-                else:
-                    _interval = self.interval
-
-                time.sleep(_interval)
-
-            elif messages:
-                # get payloads from messages & delete them from sqs
-                payloads = []
-                for message in messages:
-                    payloads.append(json.loads(message.body))
-                    message.delete()
-
-                # run tasks
-                for payload in payloads:
-                    pool.run_task(self.fn, (payload['value'], ) + args, payload['meta'])
-
-            # yield any available results
-            if self.results:
-                self._result_mutex.acquire()
-
-                _error = None
-                for result in self.results:
-                    if type(result) == TaskError:
-
-                        _error = result.error
-                    else:
-                        yield result
-
-                if _error:
-                    raise _error
-
-                self.results = []
-                self._result_mutex.release()
+            for result in self.process(args=args, in_queues=in_queues, priority=priority, pool=pool):
+                yield result
 
     def run(self, args, priority=0, iterate=False, min_priority=None, max_priority=None):
         _call = self._run(args, priority=priority, min_priority=min_priority, max_priority=max_priority)
