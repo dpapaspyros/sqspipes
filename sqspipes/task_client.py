@@ -14,16 +14,18 @@ class TaskClient(object):
 
     SQS_FIFO_AVAILABLE_AT = ('us-west-2', 'us-east-2', )
 
-    def __init__(self, domain, aws_key, aws_secret, aws_region='us-west-2', ignore_none=True):
+    def __init__(self, domain, aws_key, aws_secret, aws_region='us-west-2', ignore_none=True, fifo=True):
         """
         :param domain: A unique identifier of the application that uses the client (e.g my_awesome_app)
         :param aws_key: The AWS key that will be used. Should have full access to the SQS service.
         :param aws_secret: The AWS secret for the key used.
         :param aws_region: The AWS region. Defaults to us-west-2
         :param ignore_none: If the task output is None, ignore it. Defaults to True.
+        :param fifo: True if fifo queues must be used, False otherwise. Defaults to True.
         """
 
-        if aws_region not in self.SQS_FIFO_AVAILABLE_AT:
+        # if fifo is specified, check if region is supported
+        if fifo and (aws_region not in self.SQS_FIFO_AVAILABLE_AT):
             raise TaskClientError(
                 '`aws_region` must be one of %s - FIFO queues are not supported on other regions.' %
                 ','.join(self.SQS_FIFO_AVAILABLE_AT)
@@ -32,6 +34,7 @@ class TaskClient(object):
         self.aws_region = aws_region
         self.aws_key = aws_key
         self.aws_secret = aws_secret
+        self.fifo = fifo
 
         if not domain:
             raise TaskClientError('`domain` field is required.')
@@ -106,6 +109,7 @@ class TaskClient(object):
             config={
                 'domain': self.domain,
                 'name': task['name'],
+                'fifo': self.fifo,
                 'workers': task.get('workers', 1),
                 'aws_config': {
                     'region': self.aws_region,

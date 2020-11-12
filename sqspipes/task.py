@@ -27,6 +27,7 @@ class TaskRunner(object):
 
         self.domain = config['domain']
         self.name = config['name']
+        self.fifo = config['fifo']
         self.aws_config = config['aws_config']
         self.workers = config.get('workers', 1)
         self.priority_levels = list(reversed(range(config.get('priorities', 1))))
@@ -36,11 +37,12 @@ class TaskRunner(object):
 
     def queue_name(self, priority):
         base_name = '%s-%s' % (self.domain, self.name)
+        suffix = '.fifo' if self.fifo else ''
 
         if not priority:
-            return '%s.fifo' % base_name
+            return '%s%s' % (base_name, suffix)
 
-        return '%s--p%d.fifo' % (base_name, priority)
+        return '%s--p%d%s' % (base_name, priority, suffix)
 
     @property
     def out_queue_names(self):
@@ -120,10 +122,16 @@ class TaskRunner(object):
                 if e.response.get('Error', {}).get('Code', '') != 'AWS.SimpleQueueService.NonExistentQueue':
                     raise
 
-                q = sqs.create_queue(QueueName=queue_name, Attributes={
-                    'FifoQueue': 'true',
+                attrs = {
                     'VisibilityTimeout': '120',
-                })
+                }
+
+                if self.fifo:
+                    attrs.update({
+                        'FifoQueue': 'true',
+                    })
+
+                q = sqs.create_queue(QueueName=queue_name, Attributes=attrs)
 
             self.out_queues = [q] + self.out_queues
 
@@ -153,14 +161,20 @@ class TaskRunner(object):
 
                 # also write to queues for next task to pick up
                 try:
-                    self.out_queues[task_meta['priority']].send_message(
-                        MessageBody=json.dumps({
+                    message_params = {
+                        'MessageBody': json.dumps({
                             'meta': task_meta,
                             'value': task_output
                         }),
-                        MessageDeduplicationId=str(uuid.uuid4()),
-                        MessageGroupId='-'
-                    )
+                    }
+
+                    if self.fifo:
+                        message_params.update({
+                            'MessageDeduplicationId': str(uuid.uuid4()),
+                            'MessageGroupId': '-',
+                        })
+
+                    self.out_queues[task_meta['priority']].send_message(**message_params)
                 except:
                     traceback.print_exc()
 
@@ -170,17 +184,30 @@ class TaskRunner(object):
 
         self._result_mutex.release()
 
+    @staticmethod
+    def get_messages(in_queues):
+        # receive messages
+        messages = []
+        for in_queue in in_queues:
+            if messages:
+                break
+
+            while True:
+                try:
+                    messages += in_queue.receive_messages(MaxNumberOfMessages=10)
+                    break
+                except:
+                    # wait for a while
+                    time.sleep(1)
+
+        return messages
+
     def process(self, args, priority, pool=None, in_queues=None):
         if not pool:
             pool = TaskPool(self.workers, callback=self._on_task_finish)
 
-        # receive messages
-        messages = []
-        for in_queue in (in_queues or []):
-            if messages:
-                break
-
-            messages += in_queue.receive_messages(MaxNumberOfMessages=min(self.workers, 10))
+        # get messages
+        messages = self.get_messages(in_queues=in_queues or [])
 
         if not in_queues:
             pool.run_task(self.fn, args, meta={
