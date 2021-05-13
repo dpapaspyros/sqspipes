@@ -245,11 +245,11 @@ class TaskRunner(object):
                 else:
                     yield result
 
-            if _error:
-                raise _error
-
             self.results = []
             self._result_mutex.release()
+
+            if _error:
+                raise _error
 
     def _run(self, args, priority=0, min_priority=None, max_priority=None):
         # create the thread pool
