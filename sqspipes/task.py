@@ -198,7 +198,7 @@ class TaskRunner(object):
                     break
                 except:
                     # wait for a while
-                    time.sleep(1)
+                    time.sleep(10)
 
         return messages
 
