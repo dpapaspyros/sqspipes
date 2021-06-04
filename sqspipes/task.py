@@ -137,7 +137,6 @@ class TaskRunner(object):
 
     def _on_task_finish(self, task_meta, task_output):
         # add to results
-        self._result_mutex.acquire()
         self.results.append(task_output)
 
         # action after sending result message
@@ -181,8 +180,6 @@ class TaskRunner(object):
         # run the callback
         if post_process_callback:
             post_process_callback(*post_process_callback_args)
-
-        self._result_mutex.release()
 
     @staticmethod
     def get_messages(in_queues):
@@ -235,8 +232,6 @@ class TaskRunner(object):
 
         # return any available results
         if self.results:
-            self._result_mutex.acquire()
-
             _error = None
             for result in self.results:
                 if type(result) == TaskError:
@@ -246,7 +241,6 @@ class TaskRunner(object):
                     yield result
 
             self.results = []
-            self._result_mutex.release()
 
             if _error:
                 raise _error
